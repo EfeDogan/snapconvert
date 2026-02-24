@@ -158,6 +158,7 @@ export default function App() {
     setIsSuccess(false);
     setResultBlob(null);
     setResultFileName('');
+    setExtractedText('');
   };
 
   const removeFile = (id: string) => {
