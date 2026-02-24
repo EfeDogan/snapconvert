@@ -14,7 +14,11 @@ import {
   CheckCircle2,
   FileCode,
   ArrowRight,
-  Globe
+  Globe,
+  FileDown,
+  Type,
+  Copy,
+  ClipboardCheck
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Document, Packer, Paragraph, TextRun, AlignmentType } from 'docx';
@@ -35,7 +39,7 @@ const LANGUAGES: { code: Lang; label: string; flag: string }[] = [
 
 const translations: Record<Lang, Record<string, string>> = {
   en: {
-    subtitle: 'Extract text from your images and save them as professional PDF or Word documents.',
+    subtitle: 'Extract text from your images and save them as professional Word documents.',
     dropImages: 'Drop your images here',
     addMore: 'Add more images',
     fileHint: 'Supports JPG and PNG up to 10MB each',
@@ -44,13 +48,22 @@ const translations: Record<Lang, Record<string, string>> = {
     converting: 'Extracting & Converting…',
     success: 'Success!',
     convertBtn: 'Convert to Word (DOCX)',
+    extractTextBtn: 'Extract Text',
+    extracting: 'Extracting text…',
+    copyText: 'Copy',
+    copiedText: 'Copied!',
+    download: 'Download',
+    processingImage: 'Processing image',
+    generatingFile: 'Generating file…',
+    of: 'of',
+    readyToDownload: 'Ready to download',
     conversionComplete: 'Conversion complete!',
     downloadedAuto: 'Your file has been downloaded automatically.',
     conversionFailed: 'Conversion failed. Please try again.',
     footer: 'Privacy First • No Server Uploads',
   },
   es: {
-    subtitle: 'Extrae texto de tus imágenes y guárdalas como documentos profesionales en PDF o Word.',
+    subtitle: 'Extrae texto de tus imágenes y guárdalas como documentos profesionales en Word.',
     dropImages: 'Suelta tus imágenes aquí',
     addMore: 'Añadir más imágenes',
     fileHint: 'Admite JPG y PNG de hasta 10 MB cada uno',
@@ -59,13 +72,22 @@ const translations: Record<Lang, Record<string, string>> = {
     converting: 'Extrayendo y convirtiendo…',
     success: '¡Éxito!',
     convertBtn: 'Convertir a Word (DOCX)',
+    extractTextBtn: 'Extraer texto',
+    extracting: 'Extrayendo texto…',
+    copyText: 'Copiar',
+    copiedText: '¡Copiado!',
+    download: 'Descargar',
+    processingImage: 'Procesando imagen',
+    generatingFile: 'Generando archivo…',
+    of: 'de',
+    readyToDownload: 'Listo para descargar',
     conversionComplete: '¡Conversión completa!',
     downloadedAuto: 'Tu archivo se ha descargado automáticamente.',
     conversionFailed: 'La conversión falló. Inténtalo de nuevo.',
     footer: 'Privacidad ante todo • Sin subidas al servidor',
   },
   tr: {
-    subtitle: 'Görsellerinizdeki metni çıkarın ve profesyonel PDF veya Word belgeleri olarak kaydedin.',
+    subtitle: 'Görsellerinizdeki metni çıkarın ve profesyonel Word belgeleri olarak kaydedin.',
     dropImages: 'Görsellerinizi buraya bırakın',
     addMore: 'Daha fazla görsel ekle',
     fileHint: 'Her biri en fazla 10 MB boyutunda JPG ve PNG desteklenir',
@@ -74,6 +96,15 @@ const translations: Record<Lang, Record<string, string>> = {
     converting: 'Çıkarılıyor ve dönüştürülüyor…',
     success: 'Başarılı!',
     convertBtn: "Word'e Dönüştür (DOCX)",
+    extractTextBtn: 'Metin Çıkar',
+    extracting: 'Metin çıkarılıyor…',
+    copyText: 'Kopyala',
+    copiedText: 'Kopyalandı!',
+    download: 'İndir',
+    processingImage: 'Görsel işleniyor',
+    generatingFile: 'Dosya oluşturuluyor…',
+    of: '/',
+    readyToDownload: 'İndirmeye hazır',
     conversionComplete: 'Dönüştürme tamamlandı!',
     downloadedAuto: 'Dosyanız otomatik olarak indirildi.',
     conversionFailed: 'Dönüştürme başarısız oldu. Lütfen tekrar deneyin.',
@@ -94,6 +125,13 @@ export default function App() {
   const [isSuccess, setIsSuccess] = useState(false);
   const [lang, setLang] = useState<Lang>('tr');
   const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const [resultBlob, setResultBlob] = useState<Blob | null>(null);
+  const [resultFileName, setResultFileName] = useState('');
+  const [progress, setProgress] = useState(0);
+  const [progressLabel, setProgressLabel] = useState('');
+  const [extractedText, setExtractedText] = useState('');
+  const [isExtracting, setIsExtracting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const t = translations[lang];
@@ -109,6 +147,8 @@ export default function App() {
       }));
       setFiles(prev => [...prev, ...newFiles]);
       setIsSuccess(false);
+      setResultBlob(null);
+      setResultFileName('');
     }
   };
 
@@ -116,6 +156,8 @@ export default function App() {
     files.forEach(f => window.URL.revokeObjectURL(f.preview));
     setFiles([]);
     setIsSuccess(false);
+    setResultBlob(null);
+    setResultFileName('');
   };
 
   const removeFile = (id: string) => {
@@ -170,8 +212,12 @@ export default function App() {
   const extractTextFromImages = async () => {
     const extractedData: { text: string; alignment: 'left' | 'center' | 'right' }[][] = [];
     const model = "gemini-3-flash-preview";
+    const total = files.length;
 
-    for (const fileItem of files) {
+    for (let i = 0; i < files.length; i++) {
+      const fileItem = files[i];
+      setProgressLabel(`${t.processingImage} ${i + 1} ${t.of} ${total}`);
+
       const imagePart = await fileToGenerativePart(fileItem.file);
       const response = await ai.models.generateContent({
         model,
@@ -204,9 +250,27 @@ export default function App() {
     return extractedData;
   };
 
+  const generateFileName = async (allText: string): Promise<string> => {
+    try {
+      const model = "gemini-3-flash-preview";
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{
+          role: "user",
+          parts: [{ text: `Based on the following text content, generate a very short filename (2-4 words, no extension, use hyphens between words, lowercase, no special characters). The filename should summarize the content.\n\nContent:\n${allText.slice(0, 500)}\n\nReturn ONLY the filename, nothing else.` }]
+        }]
+      });
+      const name = (response.text || 'document').trim().replace(/[^a-zA-Z0-9\-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase();
+      return name || 'document';
+    } catch {
+      return 'document';
+    }
+  };
+
   const convertToDocx = async () => {
     const extractedData = await extractTextFromImages();
     const children: Paragraph[] = [];
+    let allText = '';
 
     extractedData.forEach((imageBlocks) => {
       imageBlocks.forEach(block => {
@@ -216,6 +280,7 @@ export default function App() {
           right: AlignmentType.RIGHT
         };
 
+        allText += block.text + ' ';
         children.push(
           new Paragraph({
             alignment: alignmentMap[block.alignment] || AlignmentType.LEFT,
@@ -236,15 +301,34 @@ export default function App() {
     });
 
     const blob = await Packer.toBlob(doc);
-    saveAs(blob, 'extracted-text.docx');
+    setProgressLabel(t.generatingFile);
+    const fileName = await generateFileName(allText);
+    setResultBlob(blob);
+    setResultFileName(`${fileName}.docx`);
   };
 
   const handleConvert = async () => {
     if (files.length === 0) return;
 
     setIsConverting(true);
+    setResultBlob(null);
+    setResultFileName('');
+    setProgress(0);
+    setProgressLabel('');
+
+    // Smooth progress: tick up ~10% every 800ms, cap at 90%
+    const progressInterval = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= 90) return 90;
+        return prev + 10;
+      });
+    }, 800);
+
     try {
       await convertToDocx();
+      clearInterval(progressInterval);
+      setProgress(100);
+      setProgressLabel('');
       setIsSuccess(true);
       confetti({
         particleCount: 100,
@@ -252,11 +336,60 @@ export default function App() {
         origin: { y: 0.6 }
       });
     } catch (error) {
+      clearInterval(progressInterval);
       console.error('Conversion failed:', error);
       alert(t.conversionFailed);
     } finally {
       setIsConverting(false);
     }
+  };
+
+  const handleDownload = () => {
+    if (resultBlob) {
+      saveAs(resultBlob, resultFileName);
+    }
+  };
+
+  const handleExtractText = async () => {
+    if (files.length === 0) return;
+
+    setIsExtracting(true);
+    setIsConverting(true);
+    setExtractedText('');
+    setIsSuccess(false);
+    setResultBlob(null);
+    setProgress(0);
+    setProgressLabel('');
+
+    const progressInterval = setInterval(() => {
+      setProgress(prev => {
+        if (prev >= 90) return 90;
+        return prev + 10;
+      });
+    }, 800);
+
+    try {
+      const extractedData = await extractTextFromImages();
+      clearInterval(progressInterval);
+      const allText = extractedData
+        .map(blocks => blocks.map(b => b.text).join('\n'))
+        .join('\n\n');
+      setExtractedText(allText);
+      setProgress(100);
+    } catch (error) {
+      clearInterval(progressInterval);
+      console.error('Extraction failed:', error);
+      alert(t.conversionFailed);
+    } finally {
+      setIsConverting(false);
+      setIsExtracting(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(extractedText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -379,8 +512,9 @@ export default function App() {
                   </h3>
                   <button
                     onClick={clearFiles}
-                    className="text-xs text-[#999] hover:text-black transition-colors"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-50 text-red-500 hover:bg-red-100 hover:text-red-600 transition-colors text-xs font-medium"
                   >
+                    <X className="w-3.5 h-3.5" />
                     {t.clearAll}
                   </button>
                 </div>
@@ -422,19 +556,19 @@ export default function App() {
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              className="flex justify-center"
+              className="flex flex-col sm:flex-row justify-center gap-3"
             >
               <button
                 onClick={handleConvert}
                 disabled={isConverting}
                 className={`
-                  w-full md:w-auto px-12 py-5 rounded-2xl font-semibold flex items-center justify-center gap-3 transition-all
+                  w-full sm:w-auto px-10 py-4 rounded-2xl font-semibold flex items-center justify-center gap-3 transition-all
                   ${isConverting
                     ? 'bg-[#E5E5E5] text-[#999] cursor-not-allowed'
                     : 'bg-black text-white hover:scale-[1.02] active:scale-[0.98] shadow-xl hover:shadow-2xl'}
                 `}
               >
-                {isConverting ? (
+                {isConverting && !isExtracting ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
                     {t.converting}
@@ -446,25 +580,136 @@ export default function App() {
                   </>
                 ) : (
                   <>
+                    <FileText className="w-5 h-5" />
                     {t.convertBtn}
-                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+
+              <button
+                onClick={handleExtractText}
+                disabled={isConverting}
+                className={`
+                  w-full sm:w-auto px-10 py-4 rounded-2xl font-semibold flex items-center justify-center gap-3 transition-all
+                  ${isConverting
+                    ? 'bg-[#E5E5E5] text-[#999] cursor-not-allowed'
+                    : 'bg-white text-black border-2 border-black/10 hover:border-black/30 hover:scale-[1.02] active:scale-[0.98] shadow-sm hover:shadow-lg'}
+                `}
+              >
+                {isExtracting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    {t.extracting}
+                  </>
+                ) : (
+                  <>
+                    <Type className="w-5 h-5" />
+                    {t.extractTextBtn}
                   </>
                 )}
               </button>
             </motion.div>
           )}
 
-          {/* Success Message */}
+          {/* Progress Bar */}
           <AnimatePresence>
-            {isSuccess && (
+            {isConverting && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                className="text-center p-6 bg-emerald-50 rounded-3xl border border-emerald-100"
+                exit={{ opacity: 0, y: -10 }}
+                className="bg-white rounded-2xl shadow-sm border border-black/5 p-5"
               >
-                <p className="text-emerald-800 font-medium mb-1">{t.conversionComplete}</p>
-                <p className="text-emerald-600 text-sm">{t.downloadedAuto}</p>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-medium text-[#333]">{progressLabel}</p>
+                  <p className="text-sm font-semibold text-black tabular-nums">{progress}%</p>
+                </div>
+                <div className="w-full h-2.5 bg-black/5 rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full bg-black rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${progress}%` }}
+                    transition={{ duration: 0.4, ease: 'easeOut' }}
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Result Card */}
+          <AnimatePresence>
+            {isSuccess && resultBlob && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-white rounded-3xl shadow-sm border border-black/5 p-6"
+              >
+                <div className="flex items-center gap-4">
+                  {/* DOCX Icon */}
+                  <div className="w-14 h-14 bg-blue-50 rounded-2xl flex items-center justify-center flex-shrink-0 border border-blue-100">
+                    <FileText className="w-7 h-7 text-blue-600" />
+                  </div>
+
+                  {/* File Info */}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-[#1A1A1A] truncate">{resultFileName}</p>
+                    <p className="text-sm text-emerald-600 flex items-center gap-1 mt-0.5">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      {t.readyToDownload}
+                    </p>
+                  </div>
+
+                  {/* Download Button */}
+                  <button
+                    onClick={handleDownload}
+                    className="inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-black text-white font-medium text-sm hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg hover:shadow-xl flex-shrink-0"
+                  >
+                    <FileDown className="w-4 h-4" />
+                    {t.download}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Extracted Text Area */}
+          <AnimatePresence>
+            {extractedText && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.95 }}
+                className="bg-white rounded-3xl shadow-sm border border-black/5 overflow-hidden"
+              >
+                <div className="p-4 bg-[#FAFAFA] border-b border-black/5 flex items-center justify-between">
+                  <h3 className="font-medium flex items-center gap-2 text-sm">
+                    <Type className="w-4 h-4" />
+                    {t.extractTextBtn}
+                  </h3>
+                  <button
+                    onClick={handleCopy}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black/5 hover:bg-black/10 transition-colors text-xs font-medium"
+                  >
+                    {copied ? (
+                      <>
+                        <ClipboardCheck className="w-3.5 h-3.5 text-emerald-600" />
+                        <span className="text-emerald-600">{t.copiedText}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        {t.copyText}
+                      </>
+                    )}
+                  </button>
+                </div>
+                <textarea
+                  readOnly
+                  value={extractedText}
+                  className="w-full p-5 text-sm leading-relaxed text-[#333] bg-white resize-none focus:outline-none min-h-[200px] max-h-[500px] font-mono"
+                  rows={Math.min(extractedText.split('\n').length + 2, 20)}
+                />
               </motion.div>
             )}
           </AnimatePresence>
