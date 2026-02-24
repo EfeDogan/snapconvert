@@ -1,0 +1,377 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useCallback, useRef } from 'react';
+import { 
+  Upload, 
+  FileText, 
+  Image as ImageIcon, 
+  X, 
+  Download, 
+  Loader2, 
+  CheckCircle2,
+  FileCode,
+  ArrowRight
+} from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { Document, Packer, Paragraph, TextRun, AlignmentType } from 'docx';
+import { saveAs } from 'file-saver';
+import confetti from 'canvas-confetti';
+import { GoogleGenAI } from "@google/genai";
+
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+
+interface FileItem {
+  id: string;
+  file: File;
+  preview: string;
+}
+
+export default function App() {
+  const [files, setFiles] = useState<FileItem[]>([]);
+  const [isConverting, setIsConverting] = useState(false);
+  const [isSuccess, setIsSuccess] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const onFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const filesArray = Array.from(e.target.files) as File[];
+      const newFiles = filesArray.map(file => ({
+        id: Math.random().toString(36).substring(7),
+        file,
+        preview: window.URL.createObjectURL(file)
+      }));
+      setFiles(prev => [...prev, ...newFiles]);
+      setIsSuccess(false);
+    }
+  };
+
+  const clearFiles = () => {
+    files.forEach(f => window.URL.revokeObjectURL(f.preview));
+    setFiles([]);
+    setIsSuccess(false);
+  };
+
+  const removeFile = (id: string) => {
+    const removed = files.find(f => f.id === id);
+    if (removed) {
+      window.URL.revokeObjectURL(removed.preview);
+    }
+    setFiles(prev => prev.filter(f => f.id !== id));
+  };
+
+  // Cleanup on unmount
+  React.useEffect(() => {
+    return () => {
+      files.forEach(f => window.URL.revokeObjectURL(f.preview));
+    };
+  }, [files]);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files) {
+      const filesArray = Array.from(e.dataTransfer.files) as File[];
+      const newFiles = filesArray
+        .filter(file => file.type.startsWith('image/'))
+        .map(file => ({
+          id: Math.random().toString(36).substring(7),
+          file,
+          preview: window.URL.createObjectURL(file)
+        }));
+      setFiles(prev => [...prev, ...newFiles]);
+      setIsSuccess(false);
+    }
+  };
+
+  const fileToGenerativePart = async (file: File) => {
+    const base64Data = await new Promise<string>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve((reader.result as string).split(',')[1]);
+      reader.readAsDataURL(file);
+    });
+    return {
+      inlineData: {
+        data: base64Data,
+        mimeType: file.type,
+      },
+    };
+  };
+
+  const extractTextFromImages = async () => {
+    const extractedData: { text: string; alignment: 'left' | 'center' | 'right' }[][] = [];
+    const model = "gemini-3-flash-preview";
+
+    for (const fileItem of files) {
+      const imagePart = await fileToGenerativePart(fileItem.file);
+      const response = await ai.models.generateContent({
+        model,
+        contents: [
+          {
+            role: "user",
+            parts: [
+              imagePart,
+              { text: `Extract all text from this image accurately. For each block of text, identify its horizontal alignment (left, center, or right) as it appears in the image. 
+              Return the result as a JSON array of objects, where each object has "text" and "alignment" properties. 
+              Example: [{"text": "Hello World", "alignment": "center"}, {"text": "Footer text", "alignment": "right"}]
+              Return ONLY the JSON array.` }
+            ]
+          }
+        ],
+        config: {
+          responseMimeType: "application/json"
+        }
+      });
+      
+      try {
+        const parsed = JSON.parse(response.text || "[]");
+        extractedData.push(parsed);
+      } catch (e) {
+        console.error("Failed to parse Gemini response", e);
+        extractedData.push([{ text: response.text || "", alignment: 'left' }]);
+      }
+    }
+    return extractedData;
+  };
+
+  const convertToDocx = async () => {
+    const extractedData = await extractTextFromImages();
+    const children: Paragraph[] = [];
+
+    extractedData.forEach((imageBlocks) => {
+      imageBlocks.forEach(block => {
+        const alignmentMap = {
+          left: AlignmentType.LEFT,
+          center: AlignmentType.CENTER,
+          right: AlignmentType.RIGHT
+        };
+
+        children.push(
+          new Paragraph({
+            alignment: alignmentMap[block.alignment] || AlignmentType.LEFT,
+            children: [new TextRun(block.text)],
+            spacing: { after: 200 }
+          })
+        );
+      });
+      
+      // Add a page break after each image's text except the last one
+      children.push(new Paragraph({ children: [new TextRun("")] }));
+    });
+
+    const doc = new Document({
+      sections: [{
+        children: children,
+      }],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    saveAs(blob, 'extracted-text.docx');
+  };
+
+  const handleConvert = async () => {
+    if (files.length === 0) return;
+    
+    setIsConverting(true);
+    try {
+      await convertToDocx();
+      setIsSuccess(true);
+      confetti({
+        particleCount: 100,
+        spread: 70,
+        origin: { y: 0.6 }
+      });
+    } catch (error) {
+      console.error('Conversion failed:', error);
+      alert('Conversion failed. Please try again.');
+    } finally {
+      setIsConverting(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#F5F5F5] text-[#1A1A1A] font-sans selection:bg-black selection:text-white">
+      <div className="max-w-4xl mx-auto px-6 py-12 md:py-24">
+        {/* Header */}
+        <header className="mb-12 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="inline-flex items-center justify-center w-16 h-16 bg-white rounded-2xl shadow-sm mb-6 border border-black/5"
+          >
+            <FileCode className="w-8 h-8 text-black" />
+          </motion.div>
+          <motion.h1 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.1 }}
+            className="text-4xl md:text-5xl font-semibold tracking-tight mb-4"
+          >
+            SnapConvert
+          </motion.h1>
+          <motion.p 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="text-lg text-[#666] max-w-md mx-auto"
+          >
+            Extract text from your images and save them as professional PDF or Word documents.
+          </motion.p>
+        </header>
+
+        <main className="space-y-8">
+          {/* Upload Area */}
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ delay: 0.3 }}
+            onDragOver={handleDragOver}
+            onDrop={handleDrop}
+            onClick={() => fileInputRef.current?.click()}
+            className={`
+              relative border-2 border-dashed rounded-3xl p-12 text-center cursor-pointer transition-all duration-300
+              ${files.length > 0 ? 'bg-white border-black/10' : 'bg-white/50 border-black/10 hover:border-black/30 hover:bg-white'}
+            `}
+          >
+            <input 
+              type="file" 
+              ref={fileInputRef}
+              onChange={onFileSelect}
+              multiple
+              accept="image/jpeg,image/png"
+              className="hidden"
+            />
+            
+            <div className="flex flex-col items-center">
+              <div className="w-12 h-12 bg-black/5 rounded-full flex items-center justify-center mb-4">
+                <Upload className="w-6 h-6 text-black/60" />
+              </div>
+              <p className="text-lg font-medium mb-1">
+                {files.length > 0 ? 'Add more images' : 'Drop your images here'}
+              </p>
+              <p className="text-sm text-[#999]">
+                Supports JPG and PNG up to 10MB each
+              </p>
+            </div>
+          </motion.div>
+
+          {/* File List */}
+          <AnimatePresence>
+            {files.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 20 }}
+                className="bg-white rounded-3xl shadow-sm border border-black/5 overflow-hidden"
+              >
+                <div className="p-6 border-bottom border-black/5 bg-[#FAFAFA] flex items-center justify-between">
+                  <h3 className="font-medium flex items-center gap-2">
+                    <ImageIcon className="w-4 h-4" />
+                    Selected Images ({files.length})
+                  </h3>
+                  <button 
+                    onClick={clearFiles}
+                    className="text-xs text-[#999] hover:text-black transition-colors"
+                  >
+                    Clear all
+                  </button>
+                </div>
+                <div className="max-h-[400px] overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                  {files.map((file) => (
+                    <motion.div
+                      key={file.id}
+                      layout
+                      initial={{ opacity: 0, scale: 0.8 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.8 }}
+                      className="group relative aspect-square rounded-2xl overflow-hidden bg-[#F5F5F5] border border-black/5"
+                    >
+                      <img 
+                        src={file.preview} 
+                        alt="Preview" 
+                        className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeFile(file.id);
+                          }}
+                          className="w-8 h-8 bg-white rounded-full flex items-center justify-center text-black hover:bg-red-500 hover:text-white transition-colors"
+                        >
+                          <X className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </motion.div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Controls */}
+          {files.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="flex justify-center"
+            >
+              <button
+                onClick={handleConvert}
+                disabled={isConverting}
+                className={`
+                  w-full md:w-auto px-12 py-5 rounded-2xl font-semibold flex items-center justify-center gap-3 transition-all
+                  ${isConverting 
+                    ? 'bg-[#E5E5E5] text-[#999] cursor-not-allowed' 
+                    : 'bg-black text-white hover:scale-[1.02] active:scale-[0.98] shadow-xl hover:shadow-2xl'}
+                `}
+              >
+                {isConverting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    Extracting & Converting...
+                  </>
+                ) : isSuccess ? (
+                  <>
+                    <CheckCircle2 className="w-5 h-5" />
+                    Success!
+                  </>
+                ) : (
+                  <>
+                    Convert to Word (DOCX)
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
+              </button>
+            </motion.div>
+          )}
+
+          {/* Success Message */}
+          <AnimatePresence>
+            {isSuccess && (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="text-center p-6 bg-emerald-50 rounded-3xl border border-emerald-100"
+              >
+                <p className="text-emerald-800 font-medium mb-1">Conversion complete!</p>
+                <p className="text-emerald-600 text-sm">Your file has been downloaded automatically.</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </main>
+
+        {/* Footer */}
+        <footer className="mt-24 pt-12 border-t border-black/5 text-center text-[#999] text-sm">
+          <p>© {new Date().getFullYear()} SnapConvert • Privacy First • No Server Uploads</p>
+        </footer>
+      </div>
+    </div>
+  );
+}

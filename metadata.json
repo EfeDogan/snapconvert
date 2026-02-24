@@ -1,0 +1,5 @@
+{
+  "name": "SnapConvert",
+  "description": "Extract text from images and convert them into Word documents with preserved alignment.",
+  "requestFramePermissions": []
+}
