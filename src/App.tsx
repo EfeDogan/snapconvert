@@ -4,16 +4,17 @@
  */
 
 import React, { useState, useCallback, useRef } from 'react';
-import { 
-  Upload, 
-  FileText, 
-  Image as ImageIcon, 
-  X, 
-  Download, 
-  Loader2, 
+import {
+  Upload,
+  FileText,
+  Image as ImageIcon,
+  X,
+  Download,
+  Loader2,
   CheckCircle2,
   FileCode,
-  ArrowRight
+  ArrowRight,
+  Globe
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Document, Packer, Paragraph, TextRun, AlignmentType } from 'docx';
@@ -22,6 +23,64 @@ import confetti from 'canvas-confetti';
 import { GoogleGenAI } from "@google/genai";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+
+// ─── i18n ───────────────────────────────────────────────
+type Lang = 'en' | 'es' | 'tr';
+
+const LANGUAGES: { code: Lang; label: string; flag: string }[] = [
+  { code: 'en', label: 'English', flag: '🇬🇧' },
+  { code: 'es', label: 'Español', flag: '🇪🇸' },
+  { code: 'tr', label: 'Türkçe', flag: '🇹🇷' },
+];
+
+const translations: Record<Lang, Record<string, string>> = {
+  en: {
+    subtitle: 'Extract text from your images and save them as professional PDF or Word documents.',
+    dropImages: 'Drop your images here',
+    addMore: 'Add more images',
+    fileHint: 'Supports JPG and PNG up to 10MB each',
+    selectedImages: 'Selected Images',
+    clearAll: 'Clear all',
+    converting: 'Extracting & Converting…',
+    success: 'Success!',
+    convertBtn: 'Convert to Word (DOCX)',
+    conversionComplete: 'Conversion complete!',
+    downloadedAuto: 'Your file has been downloaded automatically.',
+    conversionFailed: 'Conversion failed. Please try again.',
+    footer: 'Privacy First • No Server Uploads',
+  },
+  es: {
+    subtitle: 'Extrae texto de tus imágenes y guárdalas como documentos profesionales en PDF o Word.',
+    dropImages: 'Suelta tus imágenes aquí',
+    addMore: 'Añadir más imágenes',
+    fileHint: 'Admite JPG y PNG de hasta 10 MB cada uno',
+    selectedImages: 'Imágenes seleccionadas',
+    clearAll: 'Borrar todo',
+    converting: 'Extrayendo y convirtiendo…',
+    success: '¡Éxito!',
+    convertBtn: 'Convertir a Word (DOCX)',
+    conversionComplete: '¡Conversión completa!',
+    downloadedAuto: 'Tu archivo se ha descargado automáticamente.',
+    conversionFailed: 'La conversión falló. Inténtalo de nuevo.',
+    footer: 'Privacidad ante todo • Sin subidas al servidor',
+  },
+  tr: {
+    subtitle: 'Görsellerinizdeki metni çıkarın ve profesyonel PDF veya Word belgeleri olarak kaydedin.',
+    dropImages: 'Görsellerinizi buraya bırakın',
+    addMore: 'Daha fazla görsel ekle',
+    fileHint: 'Her biri en fazla 10 MB boyutunda JPG ve PNG desteklenir',
+    selectedImages: 'Seçilen Görseller',
+    clearAll: 'Tümünü temizle',
+    converting: 'Çıkarılıyor ve dönüştürülüyor…',
+    success: 'Başarılı!',
+    convertBtn: "Word'e Dönüştür (DOCX)",
+    conversionComplete: 'Dönüştürme tamamlandı!',
+    downloadedAuto: 'Dosyanız otomatik olarak indirildi.',
+    conversionFailed: 'Dönüştürme başarısız oldu. Lütfen tekrar deneyin.',
+    footer: 'Önce Gizlilik • Sunucuya Yükleme Yok',
+  },
+};
+// ─────────────────────────────────────────────────────────
 
 interface FileItem {
   id: string;
@@ -33,7 +92,12 @@ export default function App() {
   const [files, setFiles] = useState<FileItem[]>([]);
   const [isConverting, setIsConverting] = useState(false);
   const [isSuccess, setIsSuccess] = useState(false);
+  const [lang, setLang] = useState<Lang>('tr');
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const t = translations[lang];
+  const currentLang = LANGUAGES.find(l => l.code === lang)!;
 
   const onFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -116,7 +180,8 @@ export default function App() {
             role: "user",
             parts: [
               imagePart,
-              { text: `Extract all text from this image accurately. For each block of text, identify its horizontal alignment (left, center, or right) as it appears in the image. 
+              {
+                text: `Extract all text from this image accurately. For each block of text, identify its horizontal alignment (left, center, or right) as it appears in the image. 
               Return the result as a JSON array of objects, where each object has "text" and "alignment" properties. 
               Example: [{"text": "Hello World", "alignment": "center"}, {"text": "Footer text", "alignment": "right"}]
               Return ONLY the JSON array.` }
@@ -127,7 +192,7 @@ export default function App() {
           responseMimeType: "application/json"
         }
       });
-      
+
       try {
         const parsed = JSON.parse(response.text || "[]");
         extractedData.push(parsed);
@@ -159,7 +224,7 @@ export default function App() {
           })
         );
       });
-      
+
       // Add a page break after each image's text except the last one
       children.push(new Paragraph({ children: [new TextRun("")] }));
     });
@@ -176,7 +241,7 @@ export default function App() {
 
   const handleConvert = async () => {
     if (files.length === 0) return;
-    
+
     setIsConverting(true);
     try {
       await convertToDocx();
@@ -188,7 +253,7 @@ export default function App() {
       });
     } catch (error) {
       console.error('Conversion failed:', error);
-      alert('Conversion failed. Please try again.');
+      alert(t.conversionFailed);
     } finally {
       setIsConverting(false);
     }
@@ -197,6 +262,44 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#F5F5F5] text-[#1A1A1A] font-sans selection:bg-black selection:text-white">
       <div className="max-w-4xl mx-auto px-6 py-12 md:py-24">
+
+        {/* Language Selector – top-right */}
+        <div className="flex justify-end mb-4 relative">
+          <button
+            onClick={() => setLangMenuOpen(prev => !prev)}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white border border-black/10 shadow-sm hover:shadow-md transition-all text-sm font-medium"
+          >
+            <Globe className="w-4 h-4 text-black/50" />
+            <span>{currentLang.flag}</span>
+            <span>{currentLang.label}</span>
+            <svg className={`w-3 h-3 text-black/40 transition-transform ${langMenuOpen ? 'rotate-180' : ''}`} viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 5l3 3 3-3" /></svg>
+          </button>
+
+          <AnimatePresence>
+            {langMenuOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -4 }}
+                transition={{ duration: 0.15 }}
+                className="absolute right-0 top-full mt-1 z-50 bg-white rounded-xl border border-black/10 shadow-lg overflow-hidden min-w-[160px]"
+              >
+                {LANGUAGES.map((l) => (
+                  <button
+                    key={l.code}
+                    onClick={() => { setLang(l.code); setLangMenuOpen(false); }}
+                    className={`w-full text-left px-4 py-2.5 text-sm flex items-center gap-2.5 transition-colors
+                      ${l.code === lang ? 'bg-black/5 font-semibold' : 'hover:bg-black/[0.03]'}`}
+                  >
+                    <span>{l.flag}</span>
+                    <span>{l.label}</span>
+                  </button>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
         {/* Header */}
         <header className="mb-12 text-center">
           <motion.div
@@ -206,7 +309,7 @@ export default function App() {
           >
             <FileCode className="w-8 h-8 text-black" />
           </motion.div>
-          <motion.h1 
+          <motion.h1
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
@@ -214,13 +317,13 @@ export default function App() {
           >
             SnapConvert
           </motion.h1>
-          <motion.p 
+          <motion.p
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
             className="text-lg text-[#666] max-w-md mx-auto"
           >
-            Extract text from your images and save them as professional PDF or Word documents.
+            {t.subtitle}
           </motion.p>
         </header>
 
@@ -238,24 +341,24 @@ export default function App() {
               ${files.length > 0 ? 'bg-white border-black/10' : 'bg-white/50 border-black/10 hover:border-black/30 hover:bg-white'}
             `}
           >
-            <input 
-              type="file" 
+            <input
+              type="file"
               ref={fileInputRef}
               onChange={onFileSelect}
               multiple
               accept="image/jpeg,image/png"
               className="hidden"
             />
-            
+
             <div className="flex flex-col items-center">
               <div className="w-12 h-12 bg-black/5 rounded-full flex items-center justify-center mb-4">
                 <Upload className="w-6 h-6 text-black/60" />
               </div>
               <p className="text-lg font-medium mb-1">
-                {files.length > 0 ? 'Add more images' : 'Drop your images here'}
+                {files.length > 0 ? t.addMore : t.dropImages}
               </p>
               <p className="text-sm text-[#999]">
-                Supports JPG and PNG up to 10MB each
+                {t.fileHint}
               </p>
             </div>
           </motion.div>
@@ -272,13 +375,13 @@ export default function App() {
                 <div className="p-6 border-bottom border-black/5 bg-[#FAFAFA] flex items-center justify-between">
                   <h3 className="font-medium flex items-center gap-2">
                     <ImageIcon className="w-4 h-4" />
-                    Selected Images ({files.length})
+                    {t.selectedImages} ({files.length})
                   </h3>
-                  <button 
+                  <button
                     onClick={clearFiles}
                     className="text-xs text-[#999] hover:text-black transition-colors"
                   >
-                    Clear all
+                    {t.clearAll}
                   </button>
                 </div>
                 <div className="max-h-[400px] overflow-y-auto p-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
@@ -291,9 +394,9 @@ export default function App() {
                       exit={{ opacity: 0, scale: 0.8 }}
                       className="group relative aspect-square rounded-2xl overflow-hidden bg-[#F5F5F5] border border-black/5"
                     >
-                      <img 
-                        src={file.preview} 
-                        alt="Preview" 
+                      <img
+                        src={file.preview}
+                        alt="Preview"
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                       />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
@@ -326,24 +429,24 @@ export default function App() {
                 disabled={isConverting}
                 className={`
                   w-full md:w-auto px-12 py-5 rounded-2xl font-semibold flex items-center justify-center gap-3 transition-all
-                  ${isConverting 
-                    ? 'bg-[#E5E5E5] text-[#999] cursor-not-allowed' 
+                  ${isConverting
+                    ? 'bg-[#E5E5E5] text-[#999] cursor-not-allowed'
                     : 'bg-black text-white hover:scale-[1.02] active:scale-[0.98] shadow-xl hover:shadow-2xl'}
                 `}
               >
                 {isConverting ? (
                   <>
                     <Loader2 className="w-5 h-5 animate-spin" />
-                    Extracting & Converting...
+                    {t.converting}
                   </>
                 ) : isSuccess ? (
                   <>
                     <CheckCircle2 className="w-5 h-5" />
-                    Success!
+                    {t.success}
                   </>
                 ) : (
                   <>
-                    Convert to Word (DOCX)
+                    {t.convertBtn}
                     <ArrowRight className="w-5 h-5" />
                   </>
                 )}
@@ -360,8 +463,8 @@ export default function App() {
                 exit={{ opacity: 0 }}
                 className="text-center p-6 bg-emerald-50 rounded-3xl border border-emerald-100"
               >
-                <p className="text-emerald-800 font-medium mb-1">Conversion complete!</p>
-                <p className="text-emerald-600 text-sm">Your file has been downloaded automatically.</p>
+                <p className="text-emerald-800 font-medium mb-1">{t.conversionComplete}</p>
+                <p className="text-emerald-600 text-sm">{t.downloadedAuto}</p>
               </motion.div>
             )}
           </AnimatePresence>
@@ -369,7 +472,7 @@ export default function App() {
 
         {/* Footer */}
         <footer className="mt-24 pt-12 border-t border-black/5 text-center text-[#999] text-sm">
-          <p>© {new Date().getFullYear()} SnapConvert • Privacy First • No Server Uploads</p>
+          <p>© {new Date().getFullYear()} SnapConvert • {t.footer}</p>
         </footer>
       </div>
     </div>
