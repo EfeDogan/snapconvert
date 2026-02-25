@@ -18,9 +18,11 @@ import {
   FileDown,
   Type,
   Copy,
-  ClipboardCheck
+  ClipboardCheck,
+  Smartphone
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import PhoneUploadModal from './PhoneUploadModal';
 import { Document, Packer, Paragraph, TextRun, AlignmentType } from 'docx';
 import { saveAs } from 'file-saver';
 import confetti from 'canvas-confetti';
@@ -61,6 +63,20 @@ const translations: Record<Lang, Record<string, string>> = {
     downloadedAuto: 'Your file has been downloaded automatically.',
     conversionFailed: 'Conversion failed. Please try again.',
     footer: 'Privacy First • No Server Uploads',
+    uploadFromPhone: 'Upload from Phone',
+    scanQR: 'Scan this QR code with your phone to send photos',
+    sameWifi: 'Both devices must be on the same WiFi network',
+    orTypeUrl: 'Or type this URL on your phone:',
+    phoneConnected: 'Phone connected!',
+    waitingForPhotos: 'Waiting for photos…',
+    receivingPhotos: 'Receiving photos…',
+    photosReceived: 'Photos received!',
+    photosAdded: 'photos added to SnapConvert',
+    doneContinue: 'Continue',
+    phoneError: 'Connection error',
+    phoneErrorDetail: 'Please close and try again.',
+    phoneInitializing: 'Setting up connection…',
+    close: 'Close',
   },
   es: {
     subtitle: 'Extrae texto de tus imágenes y guárdalas como documentos profesionales en Word.',
@@ -85,6 +101,20 @@ const translations: Record<Lang, Record<string, string>> = {
     downloadedAuto: 'Tu archivo se ha descargado automáticamente.',
     conversionFailed: 'La conversión falló. Inténtalo de nuevo.',
     footer: 'Privacidad ante todo • Sin subidas al servidor',
+    uploadFromPhone: 'Subir desde el teléfono',
+    scanQR: 'Escanea este código QR con tu teléfono para enviar fotos',
+    sameWifi: 'Ambos dispositivos deben estar en la misma red WiFi',
+    orTypeUrl: 'O escribe esta URL en tu teléfono:',
+    phoneConnected: '¡Teléfono conectado!',
+    waitingForPhotos: 'Esperando fotos…',
+    receivingPhotos: 'Recibiendo fotos…',
+    photosReceived: '¡Fotos recibidas!',
+    photosAdded: 'fotos añadidas a SnapConvert',
+    doneContinue: 'Continuar',
+    phoneError: 'Error de conexión',
+    phoneErrorDetail: 'Por favor, cierra e inténtalo de nuevo.',
+    phoneInitializing: 'Configurando conexión…',
+    close: 'Cerrar',
   },
   tr: {
     subtitle: 'Görsellerinizdeki metni çıkarın ve profesyonel Word belgeleri olarak kaydedin.',
@@ -109,6 +139,20 @@ const translations: Record<Lang, Record<string, string>> = {
     downloadedAuto: 'Dosyanız otomatik olarak indirildi.',
     conversionFailed: 'Dönüştürme başarısız oldu. Lütfen tekrar deneyin.',
     footer: 'Önce Gizlilik • Sunucuya Yükleme Yok',
+    uploadFromPhone: 'Telefondan Yükle',
+    scanQR: 'Fotoğraf göndermek için telefonunuzla bu QR kodu okutun',
+    sameWifi: 'Her iki cihaz da aynı WiFi ağında olmalıdır',
+    orTypeUrl: 'Veya bu URL\'yi telefonunuza yazın:',
+    phoneConnected: 'Telefon bağlandı!',
+    waitingForPhotos: 'Fotoğraflar bekleniyor…',
+    receivingPhotos: 'Fotoğraflar alınıyor…',
+    photosReceived: 'Fotoğraflar alındı!',
+    photosAdded: 'fotoğraf SnapConvert\'e eklendi',
+    doneContinue: 'Devam',
+    phoneError: 'Bağlantı hatası',
+    phoneErrorDetail: 'Lütfen kapatıp tekrar deneyin.',
+    phoneInitializing: 'Bağlantı kuruluyor…',
+    close: 'Kapat',
   },
 };
 // ─────────────────────────────────────────────────────────
@@ -132,6 +176,7 @@ export default function App() {
   const [extractedText, setExtractedText] = useState('');
   const [isExtracting, setIsExtracting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showPhoneModal, setShowPhoneModal] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const t = translations[lang];
@@ -393,6 +438,18 @@ export default function App() {
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handlePhoneFilesReceived = useCallback((receivedFiles: File[]) => {
+    const newFiles = receivedFiles.map(file => ({
+      id: Math.random().toString(36).substring(7),
+      file,
+      preview: window.URL.createObjectURL(file)
+    }));
+    setFiles(prev => [...prev, ...newFiles]);
+    setIsSuccess(false);
+    setResultBlob(null);
+    setResultFileName('');
+  }, []);
+
   return (
     <div className="min-h-screen bg-[#F5F5F5] text-[#1A1A1A] font-sans selection:bg-black selection:text-white">
       <div className="max-w-4xl mx-auto px-6 py-12 md:py-24">
@@ -494,6 +551,15 @@ export default function App() {
               <p className="text-sm text-[#999]">
                 {t.fileHint}
               </p>
+
+              {/* Upload from Phone button */}
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowPhoneModal(true); }}
+                className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-black/5 hover:bg-black/10 transition-all text-sm font-medium text-[#555] hover:text-black"
+              >
+                <Smartphone className="w-4 h-4" />
+                {t.uploadFromPhone}
+              </button>
             </div>
           </motion.div>
 
@@ -721,6 +787,17 @@ export default function App() {
           <p>© {new Date().getFullYear()} SnapConvert • {t.footer}</p>
         </footer>
       </div>
+
+      {/* Phone Upload Modal */}
+      <AnimatePresence>
+        {showPhoneModal && (
+          <PhoneUploadModal
+            onClose={() => setShowPhoneModal(false)}
+            onFilesReceived={handlePhoneFilesReceived}
+            t={t}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
